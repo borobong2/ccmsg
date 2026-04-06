@@ -83,6 +83,7 @@ async function main() {
   }
 
   const sessions = loadSessions(loadOpts)
+  const since = loadOpts.since
   const limit = opts.all ? undefined : (opts.limit ?? 20)
 
   if (opts.command === 'show') {
@@ -101,7 +102,9 @@ async function main() {
 
   if (opts.command === 'top') {
     const allTurns: TurnWithContext[] = sessions.flatMap(s =>
-      s.turns.map(t => ({ ...t, sessionId: s.id, project: s.project }))
+      s.turns
+        .filter(t => !since || new Date(t.timestamp) >= since)
+        .map(t => ({ ...t, sessionId: s.id, project: s.project }))
     )
     const sorted = allTurns.sort((a, b) => b.cost - a.cost)
     if (opts.json) { printJson(limit ? sorted.slice(0, limit) : sorted) }
@@ -124,8 +127,9 @@ async function main() {
     }
 
     for (const session of sessions) {
-      // Session-level: spawned by a skill (slash command invocation)
+      // Session-level: spawned by a skill — filter by session start time
       if (session.spawnedBySkill) {
+        if (since && new Date(session.startTime) < since) continue
         addToSkill(session.spawnedBySkill, {
           i: session.totalInput, o: session.totalOutput,
           cc: session.totalCacheCreation, cr: session.totalCacheRead,
@@ -134,8 +138,9 @@ async function main() {
         continue  // don't double-count turn-level skills within same session
       }
 
-      // Turn-level: Skill tool_use within a session
+      // Turn-level: Skill tool_use — filter by turn timestamp
       for (const turn of session.turns) {
+        if (since && new Date(turn.timestamp) < since) continue
         for (const skill of turn.skills) {
           addToSkill(skill, {
             i: turn.inputTokens, o: turn.outputTokens,
