@@ -63,6 +63,14 @@ function buildSession(sessionId: string, messages: RawMessage[]): Session | null
   const cwd = cwdMsg?.cwd ?? ''
   const project = cwd ? basename(cwd) || cwd : sessionId.slice(0, 8)
 
+  // Detect if session was spawned by a skill (first user message contains <command-message>)
+  const firstUserMsg = sorted.find(m => m.type === 'user' && m.userType === 'external' && !m.isSidechain)
+  const firstContent = typeof firstUserMsg?.message?.content === 'string'
+    ? firstUserMsg.message.content
+    : JSON.stringify(firstUserMsg?.message?.content ?? '')
+  const skillSpawnMatch = firstContent.match(/<command-message>([^<]+)<\/command-message>/)
+  const spawnedBySkill = skillSpawnMatch ? skillSpawnMatch[1].trim() : undefined
+
   // Group into turns: each external user message starts a new turn
   const turns: Turn[] = []
   let currentUserMsg: RawMessage | null = null
@@ -191,6 +199,7 @@ function buildSession(sessionId: string, messages: RawMessage[]): Session | null
     totalOutput,
     totalCacheCreation,
     totalCacheRead,
+    spawnedBySkill,
   }
 }
 

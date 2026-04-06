@@ -111,21 +111,37 @@ async function main() {
 
   if (opts.command === 'skills') {
     const statsMap = new Map<string, SkillStat>()
+
+    const addToSkill = (name: string, tokens: { i: number, o: number, cc: number, cr: number, cost: number }) => {
+      const s = statsMap.get(name) ?? { name, uses: 0, inputTokens: 0, outputTokens: 0, cacheCreationTokens: 0, cacheReadTokens: 0, cost: 0 }
+      s.uses++
+      s.inputTokens += tokens.i
+      s.outputTokens += tokens.o
+      s.cacheCreationTokens += tokens.cc
+      s.cacheReadTokens += tokens.cr
+      s.cost += tokens.cost
+      statsMap.set(name, s)
+    }
+
     for (const session of sessions) {
+      // Session-level: spawned by a skill (slash command invocation)
+      if (session.spawnedBySkill) {
+        addToSkill(session.spawnedBySkill, {
+          i: session.totalInput, o: session.totalOutput,
+          cc: session.totalCacheCreation, cr: session.totalCacheRead,
+          cost: session.totalCost,
+        })
+        continue  // don't double-count turn-level skills within same session
+      }
+
+      // Turn-level: Skill tool_use within a session
       for (const turn of session.turns) {
         for (const skill of turn.skills) {
-          const existing = statsMap.get(skill) ?? {
-            name: skill, uses: 0,
-            inputTokens: 0, outputTokens: 0,
-            cacheCreationTokens: 0, cacheReadTokens: 0, cost: 0,
-          }
-          existing.uses++
-          existing.inputTokens += turn.inputTokens
-          existing.outputTokens += turn.outputTokens
-          existing.cacheCreationTokens += turn.cacheCreationTokens
-          existing.cacheReadTokens += turn.cacheReadTokens
-          existing.cost += turn.cost
-          statsMap.set(skill, existing)
+          addToSkill(skill, {
+            i: turn.inputTokens, o: turn.outputTokens,
+            cc: turn.cacheCreationTokens, cr: turn.cacheReadTokens,
+            cost: turn.cost,
+          })
         }
       }
     }

@@ -75,4 +75,5 @@ export interface Session {
   totalOutput: number
   totalCacheCreation: number
   totalCacheRead: number
+  spawnedBySkill?: string   // skill name if this session was started by a skill invocation
 }
