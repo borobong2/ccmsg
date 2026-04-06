@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 import { loadSessions, parseSince } from './parser.js'
-import { printSessionsList, printSession, printJson } from './display.js'
+import { printSessionsList, printSession, printTopTurns, printSkills, printJson } from './display.js'
+import type { TurnWithContext, SkillStat } from './types.js'
 
 const HELP = `
 ccmsg — per-message Claude Code usage analyzer
@@ -10,9 +11,12 @@ Usage:
   ccmsg sessions               List recent sessions
   ccmsg show <id>              Show per-message breakdown for a session
   ccmsg today                  Sessions from today
+  ccmsg top                    Top turns by cost across all sessions
+  ccmsg skills                 Skill usage aggregation across all sessions
 
 Options:
-  --all                        Show all sessions (no limit)
+  --all                        Show all sessions / turns (no limit)
+  --limit <n>                  Limit results (default: 20)
   --project <name>             Filter by project name
   --since <time>               Filter by time (e.g. 1h, 6h, 1d, 7d)
   --json                       Output as JSON
@@ -21,7 +25,9 @@ Options:
 Examples:
   ccmsg show 32b87704
   ccmsg today
-  ccmsg --since 2d
+  ccmsg top --since 7d
+  ccmsg top --limit 50
+  ccmsg skills --since 30d
   ccmsg --project chat-event-sourcing
 `
 
@@ -31,6 +37,7 @@ function parseArgs(argv: string[]) {
     command: 'sessions' as string,
     sessionId: undefined as string | undefined,
     all: false,
+    limit: undefined as number | undefined,
     project: undefined as string | undefined,
     since: undefined as string | undefined,
     json: false,
@@ -45,11 +52,13 @@ function parseArgs(argv: string[]) {
     else if (arg === '--json') { opts.json = true }
     else if (arg === '--project' && args[i + 1]) { opts.project = args[++i] }
     else if (arg === '--since' && args[i + 1]) { opts.since = args[++i] }
+    else if (arg === '--limit' && args[i + 1]) { opts.limit = parseInt(args[++i]) }
     else if (arg === 'sessions') { opts.command = 'sessions' }
     else if (arg === 'today') { opts.command = 'today' }
+    else if (arg === 'top') { opts.command = 'top' }
+    else if (arg === 'skills') { opts.command = 'skills' }
     else if (arg === 'show' && args[i + 1]) { opts.command = 'show'; opts.sessionId = args[++i] }
     else if (!arg.startsWith('-') && opts.command === 'sessions') {
-      // Positional: treat as session ID shorthand
       opts.command = 'show'
       opts.sessionId = arg
     }
@@ -74,6 +83,7 @@ async function main() {
   }
 
   const sessions = loadSessions(loadOpts)
+  const limit = opts.all ? undefined : (opts.limit ?? 20)
 
   if (opts.command === 'show') {
     if (!opts.sessionId) {
@@ -85,21 +95,47 @@ async function main() {
       process.exit(1)
     }
     const session = sessions[0]
-    if (opts.json) {
-      printJson(session)
-    } else {
-      printSession(session)
+    if (opts.json) { printJson(session) } else { printSession(session) }
+    return
+  }
+
+  if (opts.command === 'top') {
+    const allTurns: TurnWithContext[] = sessions.flatMap(s =>
+      s.turns.map(t => ({ ...t, sessionId: s.id, project: s.project }))
+    )
+    const sorted = allTurns.sort((a, b) => b.cost - a.cost)
+    if (opts.json) { printJson(limit ? sorted.slice(0, limit) : sorted) }
+    else { printTopTurns(sorted, limit) }
+    return
+  }
+
+  if (opts.command === 'skills') {
+    const statsMap = new Map<string, SkillStat>()
+    for (const session of sessions) {
+      for (const turn of session.turns) {
+        for (const skill of turn.skills) {
+          const existing = statsMap.get(skill) ?? {
+            name: skill, uses: 0,
+            inputTokens: 0, outputTokens: 0,
+            cacheCreationTokens: 0, cacheReadTokens: 0, cost: 0,
+          }
+          existing.uses++
+          existing.inputTokens += turn.inputTokens
+          existing.outputTokens += turn.outputTokens
+          existing.cacheCreationTokens += turn.cacheCreationTokens
+          existing.cacheReadTokens += turn.cacheReadTokens
+          existing.cost += turn.cost
+          statsMap.set(skill, existing)
+        }
+      }
     }
+    const stats = [...statsMap.values()].sort((a, b) => b.cost - a.cost)
+    if (opts.json) { printJson(stats) } else { printSkills(stats) }
     return
   }
 
   // sessions / today / default
-  if (opts.json) {
-    printJson(sessions)
-    return
-  }
-
-  const limit = opts.all ? undefined : 20
+  if (opts.json) { printJson(sessions); return }
   printSessionsList(sessions, limit)
 }
 

@@ -48,6 +48,21 @@ export interface Turn {
   commands: string[]   // slash commands from system local_command messages
 }
 
+export interface TurnWithContext extends Turn {
+  sessionId: string
+  project: string
+}
+
+export interface SkillStat {
+  name: string
+  uses: number
+  inputTokens: number
+  outputTokens: number
+  cacheCreationTokens: number
+  cacheReadTokens: number
+  cost: number
+}
+
 export interface Session {
   id: string
   project: string
