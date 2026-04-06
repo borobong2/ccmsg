@@ -91,13 +91,29 @@ function printTurn(turn) {
         ? chalk.white(`"${turn.userContent}"`)
         : chalk.dim('[no content]');
     console.log(`  ${numStr}  ${timeStr}  ${content}`);
+    // Skills line
+    if (turn.skills.length > 0 || turn.commands.length > 0) {
+        const parts = [];
+        if (turn.skills.length > 0) {
+            parts.push(turn.skills.map(s => chalk.cyan(`/skill:${s}`)).join(' '));
+        }
+        if (turn.commands.length > 0) {
+            parts.push(turn.commands.map(c => chalk.cyan(c)).join(' '));
+        }
+        console.log(`         ${chalk.dim('skills')}  ${parts.join('  ')}`);
+    }
+    // Tools line
+    if (turn.tools.length > 0) {
+        const toolStr = turn.tools.map(t => chalk.dim(t)).join(chalk.dim(', '));
+        console.log(`         ${chalk.dim('tools ')}  ${toolStr}`);
+    }
     if (turn.apiCallCount === 0) {
         console.log(chalk.dim(`         (no API calls)`));
     }
     else {
         const callsStr = turn.apiCallCount > 1
             ? chalk.dim(`${turn.apiCallCount} API calls`)
-            : chalk.dim(`1 API call`);
+            : chalk.dim(`1 API call `);
         const tokens = [
             `in ${chalk.blue(fmtNum(turn.inputTokens))}`,
             `cache+ ${chalk.yellow(fmtNum(turn.cacheCreationTokens))}`,
@@ -108,6 +124,73 @@ function printTurn(turn) {
         console.log(`         ${callsStr}  ${chalk.dim('·')}  ${tokens}  ${chalk.dim('·')}  ${costStr}`);
     }
     console.log();
+}
+export function printTopTurns(turns, limit) {
+    const list = limit ? turns.slice(0, limit) : turns;
+    const total = turns.length;
+    if (list.length === 0) {
+        console.log(chalk.yellow('No turns found.'));
+        return;
+    }
+    console.log(chalk.bold(`\n  Top turns by cost`) + chalk.dim(` (showing ${list.length} of ${total})\n`));
+    const header = [
+        chalk.dim(padL('Cost', 8)),
+        chalk.dim(padR('Project', 20)),
+        chalk.dim('Date    '),
+        chalk.dim('Time '),
+        chalk.dim(padL('API', 4)),
+        chalk.dim('Message'),
+    ].join('  ');
+    console.log('  ' + header);
+    console.log(chalk.dim('  ' + '─'.repeat(90)));
+    for (const t of list) {
+        const date = fmtDate(t.timestamp).slice(5); // MM-DD
+        const time = fmtTime(t.timestamp);
+        const msg = t.userContent ? `"${t.userContent}"` : chalk.dim('[no content]');
+        const skillTag = t.skills.length > 0 ? chalk.cyan(` [${t.skills.join(',')}]`) : '';
+        const row = [
+            chalk.green(padL(fmtCost(t.cost), 8)),
+            padR(t.project, 20),
+            chalk.dim(date),
+            chalk.dim(time),
+            chalk.dim(padL(String(t.apiCallCount), 4)),
+            msg + skillTag,
+        ].join('  ');
+        console.log('  ' + row);
+    }
+    const totalCost = turns.reduce((s, t) => s + t.cost, 0);
+    console.log(chalk.dim('\n  ' + '─'.repeat(90)));
+    console.log(`  ${chalk.bold('Total:')}  ${chalk.green.bold(fmtCost(totalCost))}  ${chalk.dim(`across ${total} turns`)}\n`);
+}
+export function printSkills(stats) {
+    if (stats.length === 0) {
+        console.log(chalk.yellow('\n  No skill usage found.\n'));
+        return;
+    }
+    console.log(chalk.bold(`\n  Skills by cost`) + chalk.dim(` (${stats.length} skills)\n`));
+    const header = [
+        chalk.dim(padR('Skill', 32)),
+        chalk.dim(padL('Uses', 5)),
+        chalk.dim(padL('Input', 10)),
+        chalk.dim(padL('Output', 8)),
+        chalk.dim(padL('Cost', 8)),
+    ].join('  ');
+    console.log('  ' + header);
+    console.log(chalk.dim('  ' + '─'.repeat(72)));
+    for (const s of stats) {
+        const row = [
+            chalk.cyan(padR(s.name, 32)),
+            padL(String(s.uses), 5),
+            padL(fmtNum(s.inputTokens + s.cacheReadTokens), 10),
+            padL(fmtNum(s.outputTokens), 8),
+            chalk.green(padL(fmtCost(s.cost), 8)),
+        ].join('  ');
+        console.log('  ' + row);
+    }
+    const totalCost = stats.reduce((s, x) => s + x.cost, 0);
+    const totalUses = stats.reduce((s, x) => s + x.uses, 0);
+    console.log(chalk.dim('\n  ' + '─'.repeat(72)));
+    console.log(`  ${chalk.bold('Total:')}  ${chalk.green.bold(fmtCost(totalCost))}  ${chalk.dim(`across ${totalUses} skill invocations`)}\n`);
 }
 export function printJson(data) {
     console.log(JSON.stringify(data, null, 2));

@@ -10,6 +10,8 @@ export interface RawUsage {
 }
 export interface RawMessage {
     type: 'user' | 'assistant' | 'system' | 'permission-mode' | 'file-history-snapshot';
+    subtype?: string;
+    content?: string;
     uuid?: string;
     parentUuid?: string | null;
     promptId?: string;
@@ -31,12 +33,29 @@ export interface Turn {
     index: number;
     timestamp: string;
     userContent: string;
+    userContentFull: string;
     model: string;
     inputTokens: number;
     outputTokens: number;
     cacheCreationTokens: number;
     cacheReadTokens: number;
     apiCallCount: number;
+    cost: number;
+    tools: string[];
+    skills: string[];
+    commands: string[];
+}
+export interface TurnWithContext extends Turn {
+    sessionId: string;
+    project: string;
+}
+export interface SkillStat {
+    name: string;
+    uses: number;
+    inputTokens: number;
+    outputTokens: number;
+    cacheCreationTokens: number;
+    cacheReadTokens: number;
     cost: number;
 }
 export interface Session {
@@ -51,4 +70,5 @@ export interface Session {
     totalOutput: number;
     totalCacheCreation: number;
     totalCacheRead: number;
+    spawnedBySkill?: string;
 }

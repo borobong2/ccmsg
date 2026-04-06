@@ -62,18 +62,26 @@ function buildSession(sessionId, messages) {
     const cwdMsg = sorted.find(m => m.cwd);
     const cwd = cwdMsg?.cwd ?? '';
     const project = cwd ? basename(cwd) || cwd : sessionId.slice(0, 8);
+    // Detect if session was spawned by a skill (first user message contains <command-message>)
+    const firstUserMsg = sorted.find(m => m.type === 'user' && m.userType === 'external' && !m.isSidechain);
+    const firstContent = typeof firstUserMsg?.message?.content === 'string'
+        ? firstUserMsg.message.content
+        : JSON.stringify(firstUserMsg?.message?.content ?? '');
+    const skillSpawnMatch = firstContent.match(/<command-message>([^<]+)<\/command-message>/);
+    const spawnedBySkill = skillSpawnMatch ? skillSpawnMatch[1].trim() : undefined;
     // Group into turns: each external user message starts a new turn
     const turns = [];
     let currentUserMsg = null;
     let pendingAssistants = [];
+    let pendingSystemCmds = [];
     let turnIndex = 0;
     const flush = () => {
         if (!currentUserMsg)
             return;
         const assistantsWithUsage = pendingAssistants.filter(m => m.message?.usage && m.message.model !== '<synthetic>');
         if (assistantsWithUsage.length === 0 && pendingAssistants.length === 0) {
-            // Empty turn, skip
             currentUserMsg = null;
+            pendingSystemCmds = [];
             return;
         }
         let inputTokens = 0;
@@ -82,6 +90,25 @@ function buildSession(sessionId, messages) {
         let cacheReadTokens = 0;
         let model = '';
         let cost = 0;
+        const toolSet = new Set();
+        const skillSet = new Set();
+        for (const a of pendingAssistants) {
+            // Collect tool names from assistant content blocks
+            if (Array.isArray(a.message?.content)) {
+                for (const block of a.message.content) {
+                    if (block.type === 'tool_use' && typeof block.name === 'string') {
+                        if (block.name === 'Skill' && block.input && typeof block.input === 'object') {
+                            const input = block.input;
+                            if (typeof input.skill === 'string')
+                                skillSet.add(input.skill);
+                        }
+                        else {
+                            toolSet.add(block.name);
+                        }
+                    }
+                }
+            }
+        }
         for (const a of assistantsWithUsage) {
             const u = a.message.usage;
             inputTokens += u.input_tokens;
@@ -93,11 +120,13 @@ function buildSession(sessionId, messages) {
             }
             cost += calcCost(u, model);
         }
+        const fullText = extractText(currentUserMsg.message?.content);
         turnIndex++;
         turns.push({
             index: turnIndex,
             timestamp: currentUserMsg.timestamp,
-            userContent: truncate(extractText(currentUserMsg.message?.content), 60),
+            userContent: truncate(fullText, 80),
+            userContentFull: fullText,
             model,
             inputTokens,
             outputTokens,
@@ -105,22 +134,32 @@ function buildSession(sessionId, messages) {
             cacheReadTokens,
             apiCallCount: assistantsWithUsage.length,
             cost,
+            tools: [...toolSet],
+            skills: [...skillSet],
+            commands: [...pendingSystemCmds],
         });
         currentUserMsg = null;
         pendingAssistants = [];
+        pendingSystemCmds = [];
     };
     for (const msg of sorted) {
         if (msg.type === 'user' && msg.userType === 'external' && !msg.isSidechain) {
-            // Tool result messages continue the current turn instead of starting a new one
             if (isToolResultMessage(msg.message?.content) && currentUserMsg) {
                 continue;
             }
             flush();
             currentUserMsg = msg;
             pendingAssistants = [];
+            pendingSystemCmds = [];
         }
         else if (msg.type === 'assistant' && currentUserMsg) {
             pendingAssistants.push(msg);
+        }
+        else if (msg.type === 'system' && msg.subtype === 'local_command' && currentUserMsg) {
+            // Extract slash command name from <command-name>...</command-name>
+            const match = (msg.content ?? '').match(/<command-name>([^<]+)<\/command-name>/);
+            if (match)
+                pendingSystemCmds.push(match[1].trim());
         }
     }
     flush();
@@ -150,6 +189,7 @@ function buildSession(sessionId, messages) {
         totalOutput,
         totalCacheCreation,
         totalCacheRead,
+        spawnedBySkill,
     };
 }
 export function loadSessions(opts = {}) {

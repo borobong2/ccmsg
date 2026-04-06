@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 import { loadSessions, parseSince } from './parser.js';
-import { printSessionsList, printSession, printJson } from './display.js';
+import { printSessionsList, printSession, printTopTurns, printSkills, printJson } from './display.js';
 const HELP = `
 ccmsg — per-message Claude Code usage analyzer
 
@@ -9,9 +9,14 @@ Usage:
   ccmsg sessions               List recent sessions
   ccmsg show <id>              Show per-message breakdown for a session
   ccmsg today                  Sessions from today
+  ccmsg top                    Top turns by cost across all sessions
+  ccmsg top today              Top turns from today
+  ccmsg skills                 Skill usage aggregation across all sessions
+  ccmsg skills today           Skill usage from today
 
 Options:
-  --all                        Show all sessions (no limit)
+  --all                        Show all sessions / turns (no limit)
+  --limit <n>                  Limit results (default: 20)
   --project <name>             Filter by project name
   --since <time>               Filter by time (e.g. 1h, 6h, 1d, 7d)
   --json                       Output as JSON
@@ -20,8 +25,10 @@ Options:
 Examples:
   ccmsg show 32b87704
   ccmsg today
-  ccmsg --since 2d
-  ccmsg --project chat-event-sourcing
+  ccmsg skills today
+  ccmsg top today
+  ccmsg top --since 7d
+  ccmsg skills --since 30d
 `;
 function parseArgs(argv) {
     const args = argv.slice(2);
@@ -29,6 +36,8 @@ function parseArgs(argv) {
         command: 'sessions',
         sessionId: undefined,
         all: false,
+        today: false,
+        limit: undefined,
         project: undefined,
         since: undefined,
         json: false,
@@ -52,18 +61,33 @@ function parseArgs(argv) {
         else if (arg === '--since' && args[i + 1]) {
             opts.since = args[++i];
         }
+        else if (arg === '--limit' && args[i + 1]) {
+            opts.limit = parseInt(args[++i]);
+        }
         else if (arg === 'sessions') {
             opts.command = 'sessions';
         }
-        else if (arg === 'today') {
-            opts.command = 'today';
+        else if (arg === 'top') {
+            opts.command = 'top';
+        }
+        else if (arg === 'skills') {
+            opts.command = 'skills';
         }
         else if (arg === 'show' && args[i + 1]) {
             opts.command = 'show';
             opts.sessionId = args[++i];
         }
+        else if (arg === 'today') {
+            // 'today' as main command → sessions today
+            // 'today' after skills/top → filter by today
+            if (opts.command === 'skills' || opts.command === 'top') {
+                opts.today = true;
+            }
+            else {
+                opts.command = 'today';
+            }
+        }
         else if (!arg.startsWith('-') && opts.command === 'sessions') {
-            // Positional: treat as session ID shorthand
             opts.command = 'show';
             opts.sessionId = arg;
         }
@@ -77,12 +101,15 @@ async function main() {
         console.log(HELP);
         process.exit(0);
     }
+    const todaySince = opts.today || opts.command === 'today' ? startOfToday() : undefined;
     const loadOpts = {
-        since: opts.since ? parseSince(opts.since) : opts.command === 'today' ? startOfToday() : undefined,
+        since: opts.since ? parseSince(opts.since) : todaySince,
         projectFilter: opts.project,
         sessionId: opts.command === 'show' ? opts.sessionId : undefined,
     };
     const sessions = loadSessions(loadOpts);
+    const since = loadOpts.since;
+    const limit = opts.all ? undefined : (opts.limit ?? 20);
     if (opts.command === 'show') {
         if (!opts.sessionId) {
             console.error('Usage: ccmsg show <session-id>');
@@ -101,12 +128,70 @@ async function main() {
         }
         return;
     }
+    if (opts.command === 'top') {
+        const allTurns = sessions.flatMap(s => s.turns
+            .filter(t => !since || new Date(t.timestamp) >= since)
+            .map(t => ({ ...t, sessionId: s.id, project: s.project })));
+        const sorted = allTurns.sort((a, b) => b.cost - a.cost);
+        if (opts.json) {
+            printJson(limit ? sorted.slice(0, limit) : sorted);
+        }
+        else {
+            printTopTurns(sorted, limit);
+        }
+        return;
+    }
+    if (opts.command === 'skills') {
+        const statsMap = new Map();
+        const addToSkill = (name, tokens) => {
+            const s = statsMap.get(name) ?? { name, uses: 0, inputTokens: 0, outputTokens: 0, cacheCreationTokens: 0, cacheReadTokens: 0, cost: 0 };
+            s.uses++;
+            s.inputTokens += tokens.i;
+            s.outputTokens += tokens.o;
+            s.cacheCreationTokens += tokens.cc;
+            s.cacheReadTokens += tokens.cr;
+            s.cost += tokens.cost;
+            statsMap.set(name, s);
+        };
+        for (const session of sessions) {
+            // Session-level: spawned by a skill — filter by session start time
+            if (session.spawnedBySkill) {
+                if (since && new Date(session.startTime) < since)
+                    continue;
+                addToSkill(session.spawnedBySkill, {
+                    i: session.totalInput, o: session.totalOutput,
+                    cc: session.totalCacheCreation, cr: session.totalCacheRead,
+                    cost: session.totalCost,
+                });
+                continue; // don't double-count turn-level skills within same session
+            }
+            // Turn-level: Skill tool_use — filter by turn timestamp
+            for (const turn of session.turns) {
+                if (since && new Date(turn.timestamp) < since)
+                    continue;
+                for (const skill of turn.skills) {
+                    addToSkill(skill, {
+                        i: turn.inputTokens, o: turn.outputTokens,
+                        cc: turn.cacheCreationTokens, cr: turn.cacheReadTokens,
+                        cost: turn.cost,
+                    });
+                }
+            }
+        }
+        const stats = [...statsMap.values()].sort((a, b) => b.cost - a.cost);
+        if (opts.json) {
+            printJson(stats);
+        }
+        else {
+            printSkills(stats);
+        }
+        return;
+    }
     // sessions / today / default
     if (opts.json) {
         printJson(sessions);
         return;
     }
-    const limit = opts.all ? undefined : 20;
     printSessionsList(sessions, limit);
 }
 function startOfToday() {
