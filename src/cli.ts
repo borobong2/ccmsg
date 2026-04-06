@@ -12,7 +12,9 @@ Usage:
   ccmsg show <id>              Show per-message breakdown for a session
   ccmsg today                  Sessions from today
   ccmsg top                    Top turns by cost across all sessions
+  ccmsg top today              Top turns from today
   ccmsg skills                 Skill usage aggregation across all sessions
+  ccmsg skills today           Skill usage from today
 
 Options:
   --all                        Show all sessions / turns (no limit)
@@ -25,10 +27,10 @@ Options:
 Examples:
   ccmsg show 32b87704
   ccmsg today
+  ccmsg skills today
+  ccmsg top today
   ccmsg top --since 7d
-  ccmsg top --limit 50
   ccmsg skills --since 30d
-  ccmsg --project chat-event-sourcing
 `
 
 function parseArgs(argv: string[]) {
@@ -37,6 +39,7 @@ function parseArgs(argv: string[]) {
     command: 'sessions' as string,
     sessionId: undefined as string | undefined,
     all: false,
+    today: false,
     limit: undefined as number | undefined,
     project: undefined as string | undefined,
     since: undefined as string | undefined,
@@ -54,10 +57,15 @@ function parseArgs(argv: string[]) {
     else if (arg === '--since' && args[i + 1]) { opts.since = args[++i] }
     else if (arg === '--limit' && args[i + 1]) { opts.limit = parseInt(args[++i]) }
     else if (arg === 'sessions') { opts.command = 'sessions' }
-    else if (arg === 'today') { opts.command = 'today' }
     else if (arg === 'top') { opts.command = 'top' }
     else if (arg === 'skills') { opts.command = 'skills' }
     else if (arg === 'show' && args[i + 1]) { opts.command = 'show'; opts.sessionId = args[++i] }
+    else if (arg === 'today') {
+      // 'today' as main command → sessions today
+      // 'today' after skills/top → filter by today
+      if (opts.command === 'skills' || opts.command === 'top') { opts.today = true }
+      else { opts.command = 'today' }
+    }
     else if (!arg.startsWith('-') && opts.command === 'sessions') {
       opts.command = 'show'
       opts.sessionId = arg
@@ -76,8 +84,9 @@ async function main() {
     process.exit(0)
   }
 
+  const todaySince = opts.today || opts.command === 'today' ? startOfToday() : undefined
   const loadOpts = {
-    since: opts.since ? parseSince(opts.since) : opts.command === 'today' ? startOfToday() : undefined,
+    since: opts.since ? parseSince(opts.since) : todaySince,
     projectFilter: opts.project,
     sessionId: opts.command === 'show' ? opts.sessionId : undefined,
   }
