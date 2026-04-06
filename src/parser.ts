@@ -67,6 +67,7 @@ function buildSession(sessionId: string, messages: RawMessage[]): Session | null
   const turns: Turn[] = []
   let currentUserMsg: RawMessage | null = null
   let pendingAssistants: RawMessage[] = []
+  let pendingSystemCmds: string[] = []
   let turnIndex = 0
 
   const flush = () => {
@@ -77,8 +78,8 @@ function buildSession(sessionId: string, messages: RawMessage[]): Session | null
     )
 
     if (assistantsWithUsage.length === 0 && pendingAssistants.length === 0) {
-      // Empty turn, skip
       currentUserMsg = null
+      pendingSystemCmds = []
       return
     }
 
@@ -88,6 +89,24 @@ function buildSession(sessionId: string, messages: RawMessage[]): Session | null
     let cacheReadTokens = 0
     let model = ''
     let cost = 0
+    const toolSet = new Set<string>()
+    const skillSet = new Set<string>()
+
+    for (const a of pendingAssistants) {
+      // Collect tool names from assistant content blocks
+      if (Array.isArray(a.message?.content)) {
+        for (const block of a.message!.content as Record<string, unknown>[]) {
+          if (block.type === 'tool_use' && typeof block.name === 'string') {
+            if (block.name === 'Skill' && block.input && typeof block.input === 'object') {
+              const input = block.input as Record<string, unknown>
+              if (typeof input.skill === 'string') skillSet.add(input.skill)
+            } else {
+              toolSet.add(block.name)
+            }
+          }
+        }
+      }
+    }
 
     for (const a of assistantsWithUsage) {
       const u = a.message!.usage!
@@ -101,11 +120,14 @@ function buildSession(sessionId: string, messages: RawMessage[]): Session | null
       cost += calcCost(u, model)
     }
 
+    const fullText = extractText(currentUserMsg.message?.content)
+
     turnIndex++
     turns.push({
       index: turnIndex,
       timestamp: currentUserMsg.timestamp!,
-      userContent: truncate(extractText(currentUserMsg.message?.content), 60),
+      userContent: truncate(fullText, 80),
+      userContentFull: fullText,
       model,
       inputTokens,
       outputTokens,
@@ -113,23 +135,31 @@ function buildSession(sessionId: string, messages: RawMessage[]): Session | null
       cacheReadTokens,
       apiCallCount: assistantsWithUsage.length,
       cost,
+      tools: [...toolSet],
+      skills: [...skillSet],
+      commands: [...pendingSystemCmds],
     })
 
     currentUserMsg = null
     pendingAssistants = []
+    pendingSystemCmds = []
   }
 
   for (const msg of sorted) {
     if (msg.type === 'user' && msg.userType === 'external' && !msg.isSidechain) {
-      // Tool result messages continue the current turn instead of starting a new one
       if (isToolResultMessage(msg.message?.content) && currentUserMsg) {
         continue
       }
       flush()
       currentUserMsg = msg
       pendingAssistants = []
+      pendingSystemCmds = []
     } else if (msg.type === 'assistant' && currentUserMsg) {
       pendingAssistants.push(msg)
+    } else if (msg.type === 'system' && msg.subtype === 'local_command' && currentUserMsg) {
+      // Extract slash command name from <command-name>...</command-name>
+      const match = (msg.content ?? '').match(/<command-name>([^<]+)<\/command-name>/)
+      if (match) pendingSystemCmds.push(match[1].trim())
     }
   }
   flush()

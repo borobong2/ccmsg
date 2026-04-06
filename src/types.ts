@@ -11,6 +11,8 @@ export interface RawUsage {
 
 export interface RawMessage {
   type: 'user' | 'assistant' | 'system' | 'permission-mode' | 'file-history-snapshot'
+  subtype?: string      // e.g. "local_command" for system messages
+  content?: string      // top-level content for system messages
   uuid?: string
   parentUuid?: string | null
   promptId?: string
@@ -33,6 +35,7 @@ export interface Turn {
   index: number
   timestamp: string
   userContent: string
+  userContentFull: string
   model: string
   inputTokens: number
   outputTokens: number
@@ -40,6 +43,9 @@ export interface Turn {
   cacheReadTokens: number
   apiCallCount: number
   cost: number
+  tools: string[]      // unique tool names used (e.g. Bash, Edit, Agent)
+  skills: string[]     // skill names from Skill tool invocations
+  commands: string[]   // slash commands from system local_command messages
 }
 
 export interface Session {

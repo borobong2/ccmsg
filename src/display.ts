@@ -109,12 +109,30 @@ function printTurn(turn: Turn): void {
 
   console.log(`  ${numStr}  ${timeStr}  ${content}`)
 
+  // Skills line
+  if (turn.skills.length > 0 || turn.commands.length > 0) {
+    const parts: string[] = []
+    if (turn.skills.length > 0) {
+      parts.push(turn.skills.map(s => chalk.cyan(`/skill:${s}`)).join(' '))
+    }
+    if (turn.commands.length > 0) {
+      parts.push(turn.commands.map(c => chalk.cyan(c)).join(' '))
+    }
+    console.log(`         ${chalk.dim('skills')}  ${parts.join('  ')}`)
+  }
+
+  // Tools line
+  if (turn.tools.length > 0) {
+    const toolStr = turn.tools.map(t => chalk.dim(t)).join(chalk.dim(', '))
+    console.log(`         ${chalk.dim('tools ')}  ${toolStr}`)
+  }
+
   if (turn.apiCallCount === 0) {
     console.log(chalk.dim(`         (no API calls)`))
   } else {
     const callsStr = turn.apiCallCount > 1
       ? chalk.dim(`${turn.apiCallCount} API calls`)
-      : chalk.dim(`1 API call`)
+      : chalk.dim(`1 API call `)
 
     const tokens = [
       `in ${chalk.blue(fmtNum(turn.inputTokens))}`,
